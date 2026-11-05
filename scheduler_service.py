@@ -235,14 +235,35 @@ def reschedule_meeting(meeting_id, proposed, request_id=None):
         ).fetchone()
         if prior:
             return m
+        participants = json.loads(m["participants"])
+        duration = parse_time(m["ends_at"]) - parse_time(m["starts_at"])
+        proposed = parse_time(proposed)
+        req_end = proposed + duration
+        is_free = available(
+            c,
+            participants,
+            proposed,
+            req_end,
+            exclude=meeting_id,
+            run_id=m["run_id"],
+        )
         start, end = next_slot(
             c,
-            json.loads(m["participants"]),
+            participants,
             proposed,
-            parse_time(m["ends_at"]) - parse_time(m["starts_at"]),
+            duration,
             meeting_id,
             run_id=m["run_id"],
         )
+        collision_avoided = (not is_free) or (start != proposed)
+        collision_note = (
+            f"COLLISION AVOIDED: Requested slot {proposed.astimezone(IST).strftime('%a %b %d, %I:%M %p IST')} busy/unavailable -> Auto-slotted next free window: {start.astimezone(IST).strftime('%a %b %d, %I:%M %p IST')}"
+            if collision_avoided
+            else f"Slot confirmed directly: {start.astimezone(IST).strftime('%a %b %d, %I:%M %p IST')}"
+        )
+        old_starts_at = m["starts_at"]
+        old_ends_at = m["ends_at"]
+        old_version = m["version"]
         version = m["version"] + 1
         cal = ics(meeting_id, m["title"], start, end, version, m["agenda"])
         c.execute(
@@ -255,7 +276,21 @@ def reschedule_meeting(meeting_id, proposed, request_id=None):
             version=version,
             status="RESCHEDULED_CONFIRMED",
             ics=cal,
+            old_starts_at=old_starts_at,
+            old_ends_at=old_ends_at,
+            old_version=old_version,
+            collision_avoided=collision_avoided,
+            collision_note=collision_note,
         )
+        receipt_payload = {
+            "request_id": request_id,
+            "old_starts_at": old_starts_at,
+            "new_starts_at": start.isoformat(),
+            "old_version": old_version,
+            "new_version": version,
+            "collision_avoided": collision_avoided,
+            "collision_note": collision_note,
+        }
         c.execute(
             "INSERT INTO notifications_outbox(run_id,meeting_id,recipient,kind,idempotency_key,payload,created_at) VALUES(?,?,?,?,?,?,?)",
             (
@@ -264,7 +299,7 @@ def reschedule_meeting(meeting_id, proposed, request_id=None):
                 "system",
                 "RESCHEDULE_RECEIPT",
                 marker,
-                db.dump({"request_id": request_id}),
+                db.dump(receipt_payload),
                 db.now(),
             ),
         )

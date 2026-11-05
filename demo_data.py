@@ -2,13 +2,31 @@
 COMPANIES = {
     "897127": {
         "crustdata_company_id": 897127,
-        "basic_info": {"name": "Razorpay", "primary_domain": "razorpay.com"},
-        "funding": {"last_fundraise_date": "2021-12-01"},
+        "basic_info": {
+            "name": "Razorpay",
+            "primary_domain": "razorpay.com",
+            "employee_count": 4027,
+        },
+        "funding": {
+            "last_fundraise_date": "2021-12-01",
+            "total_funding_usd": "$816.6M",
+            "last_fundraise_amount": "$375M",
+        },
+        "headcount": {"total_headcount": 4027, "headcount": 4027},
     },
     "6042422": {
         "crustdata_company_id": 6042422,
-        "basic_info": {"name": "Freshworks", "primary_domain": "freshworks.com"},
-        "funding": {"last_fundraise_date": "2021-01-01"},
+        "basic_info": {
+            "name": "Freshworks",
+            "primary_domain": "freshworks.com",
+            "employee_count": 5200,
+        },
+        "funding": {
+            "last_fundraise_date": "2021-01-01",
+            "total_funding_usd": "$484M",
+            "last_fundraise_amount": "$250M",
+        },
+        "headcount": {"total_headcount": 5200, "headcount": 5200},
     },
 }
 
@@ -88,8 +106,12 @@ PEOPLE = [
 
 
 def response(endpoint, payload):
-    if endpoint == "/company/identify":
-        val = (payload.get("domains") or payload.get("names") or [""])[0].lower()
+    if endpoint in ("/company/identify", "/company/search"):
+        query_val = payload.get("query")
+        if query_val:
+            val = query_val.lower()
+        else:
+            val = (payload.get("domains") or payload.get("names") or [""])[0].lower()
         co = next(
             (
                 x

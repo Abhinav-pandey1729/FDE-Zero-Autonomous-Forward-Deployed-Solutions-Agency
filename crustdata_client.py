@@ -3,6 +3,7 @@
 import hashlib
 import json
 import os
+import time
 
 import httpx
 from dotenv import load_dotenv
@@ -21,14 +22,13 @@ def api_token():
             "CRUSTDATA_API_TOKEN"
         )
     except Exception:
-        # Streamlit raises different errors for missing files and bare-mode access.
         token = None
     return token or os.getenv("CRUSTDATA_API_KEY") or os.getenv("CRUSTDATA_API_TOKEN")
 
 
 def valid_response(endpoint, data):
     """Reject malformed containers before they reach discovery code."""
-    if endpoint in {"/company/identify", "/company/enrich"}:
+    if endpoint in {"/company/identify", "/company/enrich", "/company/search"}:
         return isinstance(data, list) and all(
             isinstance(item, dict)
             and isinstance(item.get("matches") or [], list)
@@ -73,7 +73,6 @@ class CrustdataClient:
                 "source": "synthetic fixture; not live Crustdata",
             },
         )
-        # Fallback records never enter the live API cache.
         return fallback_response(endpoint, payload)
 
     def post(self, endpoint, payload):
@@ -109,24 +108,59 @@ class CrustdataClient:
             if not self.token:
                 return self.fallback(endpoint, payload, "API key unavailable")
             try:
-                response = httpx.post(
+                res = httpx.post(
                     "https://api.crustdata.com" + endpoint,
                     json=payload,
                     headers={
                         "Authorization": "Token " + self.token,
                         "x-api-version": "2025-11-01",
                     },
-                    timeout=5,
+                    timeout=8,
                 )
-                response.raise_for_status()
-                data = response.json()
+                if res.status_code == 429 and ("x-ratelimit-reset" in res.headers or "retry-after" in res.headers):
+                    reset_header = res.headers.get("x-ratelimit-reset") or res.headers.get("retry-after")
+                    try:
+                        wait_seconds = min(float(reset_header), 2.0)
+                    except ValueError:
+                        wait_seconds = 0.05
+                    db.audit(
+                        self.run_id,
+                        "RATE_LIMIT_429_BACKOFF",
+                        {
+                            "endpoint": endpoint,
+                            "attempt": 1,
+                            "wait_seconds": wait_seconds,
+                            "x_ratelimit_reset": reset_header,
+                        },
+                    )
+                    time.sleep(wait_seconds)
+                    res = httpx.post(
+                        "https://api.crustdata.com" + endpoint,
+                        json=payload,
+                        headers={
+                            "Authorization": "Token " + self.token,
+                            "x-api-version": "2025-11-01",
+                        },
+                        timeout=8,
+                    )
+                res.raise_for_status()
+                data = res.json()
                 if not valid_response(endpoint, data):
                     raise ValueError("Invalid API response shape")
             except (httpx.HTTPError, ValueError) as exc:
                 return self.fallback(endpoint, payload, type(exc).__name__)
+
             if endpoint == "/company/identify" and not any(
-                item.get("matches") for item in data
+                item.get("matches") for item in (data or [])
             ):
+                query_name = (payload.get("names") or [""])[0]
+                if query_name and "." not in query_name:
+                    try:
+                        search_res = self.post("/company/search", {"query": query_name})
+                        if any(item.get("matches") for item in search_res):
+                            return search_res
+                    except Exception:
+                        pass
                 return self.fallback(endpoint, payload, "Company was not resolved")
         db.execute(
             "INSERT OR IGNORE INTO cache VALUES(?,?,?,?,?)",
