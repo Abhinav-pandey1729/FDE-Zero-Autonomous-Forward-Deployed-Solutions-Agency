@@ -13,3 +13,8 @@ __pycache__/
 .cursor/
 .vscode/
 .idea/
+
+# Local runtime database
+*.db
+*.db-wal
+*.db-shm
