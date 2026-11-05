@@ -146,6 +146,8 @@ def hydrate_flagship_if_missing():
     if os.path.exists(DB):
         return False
     source = Path(__file__).with_name("flagship_seed.sqlite.gz")
+    if not source.is_file():
+        return False
     directory = os.path.dirname(os.path.abspath(DB))
     fd, tmp = tempfile.mkstemp(prefix=".foundry-seed-", dir=directory)
     try:
@@ -156,5 +158,17 @@ def hydrate_flagship_if_missing():
             return True
         except FileExistsError:
             return False
+        except OSError:
+            if not os.path.exists(DB):
+                try:
+                    os.replace(tmp, DB)
+                    return True
+                except OSError:
+                    pass
+            return False
     finally:
-        os.unlink(tmp)
+        if os.path.exists(tmp):
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass

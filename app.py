@@ -21,7 +21,7 @@ except (OSError, RuntimeError) as exc:
     st.error("Unable to initialize the application: " + str(exc))
     st.stop()
 with st.sidebar:
-    st.markdown("## â—ˆ FOUNDRY-ZERO")
+    st.markdown("FOUNDRY-ZERO")
     st.caption("AUTONOMOUS VENTURE STUDIO")
     mode = st.selectbox("Data source", ["Demo dataset", "Live Crustdata"])
     identifiers = st.text_input(
@@ -92,13 +92,12 @@ if not runs:
     )
     st.stop()
 ids = [x["id"] for x in runs]
+if "selected_run" not in st.session_state or st.session_state["selected_run"] not in ids:
+    st.session_state["selected_run"] = ids[0]
 run = st.selectbox(
     "Run",
     ids,
     key="selected_run",
-    index=ids.index(st.session_state["selected_run"])
-    if st.session_state.get("selected_run") in ids
-    else 0,
     format_func=lambda x: (
         x[:8]
         + " · "

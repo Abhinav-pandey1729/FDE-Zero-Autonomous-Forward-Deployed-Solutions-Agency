@@ -120,7 +120,7 @@ def research_market(run, cid, client, mode):
     data = client.post(
         "/company/enrich",
         {
-            "crustdata_company_ids": [int(cid)],
+            "crustdata_company_ids": [int(cid) if str(cid).isdigit() else cid],
             "fields": ["crustdata_company_id", "basic_info", "funding"],
         },
     )
@@ -150,7 +150,7 @@ def research_market(run, cid, client, mode):
                 {
                     "field": "company.basic_info.company_id",
                     "type": "in",
-                    "value": [int(cid)],
+                    "value": [int(cid) if str(cid).isdigit() else cid],
                 },
                 {"field": "job_details.title", "type": "(.)", "value": "engineer"},
             ],
@@ -196,7 +196,7 @@ def discover_people(run, cid, client, mode):
                 {
                     "field": "experience.employment_details.current.company_id",
                     "type": "=",
-                    "value": int(cid),
+                    "value": int(cid) if str(cid).isdigit() else cid,
                 }
             ],
         },
