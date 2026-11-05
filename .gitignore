@@ -1,9 +1,12 @@
 # Environment variables and secrets
 .env
 *.env
+.streamlit/secrets.toml
 
 # Python cache & bytecode
 __pycache__/
+.venv/
+venv/
 *.py[cod]
 *$py.class
 *.so
