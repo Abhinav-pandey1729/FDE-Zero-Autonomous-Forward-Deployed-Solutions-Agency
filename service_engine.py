@@ -4,7 +4,25 @@ import db
 from crustdata_client import CrustdataClient
 
 STAGES=['STAGE_1_IDENTIFY_DEDUPE','STAGE_2_HIRING_SIGNALS','STAGE_3_ENRICH_AND_TRUST_CHECK','STAGE_4_DECISION_MAKER_VERIFIED','STAGE_5_POC_BUILT_AND_DISPATCHED']
-UNKNOWN='[UNVERIFIED: Not in Crustdata graph or live web — Refusing to guess]'
+UNKNOWN='[UNVERIFIED: Field absent in Crustdata graph — Refusing to guess]'
+def parse_request(request):
+    """Extract explicit identifiers conservatively; semantic parsing is necessarily fallible."""
+    domains=re.findall(r'(?i)(?<![\w@])(?:[\w-]+\.)+[a-z]{2,}(?![\w-])',request)
+    text=re.sub(r'(?i)(?<![\w@])(?:[\w-]+\.)+[a-z]{2,}(?![\w-])',' ',request)
+    stop={'Find','Search','Show','Identify','Verify','Deploy','And','For','Indian','India','B2B','SaaS','ML','AI','API','Data','Engineering','Software','Company','Companies','Hiring','Webhook','Request','Signals','Compliance','Active','Head','Custom','Live','The','IIT','Kanpur'}
+    names=[]
+    for match in re.finditer(r'\b[A-Z][A-Za-z0-9&\-]*(?:\s+[A-Z][A-Za-z0-9&\-]*)*',text):
+        parts=match.group().split(); parts=[x for x in parts if x not in stop]
+        if parts: names.append(' '.join(parts))
+    if not domains and not names and re.fullmatch(r'[a-z0-9-]+(?:\s*,\s*[a-z0-9-]+)*',request.strip()): names=[x.strip() for x in request.split(',')]
+    count=re.search(r'\b(\d+)\b',request); limit=min(int(count.group(1)),10) if count else 3
+    return {'identifiers':list(dict.fromkeys(domains+names)), 'limit':max(1,limit)}
+def discover_companies(client,request,limit):
+    payload={'search':{'query':request,'mode':'hybrid'},'limit':min(100,max(limit*3,limit)),'fields':['crustdata_company_id','basic_info']}
+    if re.search(r'(?i)\b(india|indian)\b',request): payload['filters']={'field':'locations.country','type':'=','value':'India'}
+    result=client.post('/company/search',payload)
+    companies=(result or {}).get('companies') or []
+    return [str(c.get('crustdata_company_id') or (c.get('basic_info') or {}).get('primary_domain')) for c in companies if c.get('crustdata_company_id') or (c.get('basic_info') or {}).get('primary_domain')][:limit]
 def verify_active_decision_maker(profile,target_company_id,target_company_name):
     basic=profile.get('basic_profile') or {}; text=' '.join(str(basic.get(k) or '') for k in ('headline','current_title'))
     jobs=((profile.get('experience') or {}).get('employment_details') or {}).get('current') or []
@@ -33,13 +51,17 @@ def stage(run,cid,name,fn,client,crash=None):
     ev=client.events[before:]; db.checkpoint(run,cid,name,data,round(time.monotonic()-start,3),sum(e['credits'] for e in ev))
     if crash==name or crash==STAGES.index(name)+1: raise RuntimeError('Simulated crash after '+name)
     return data
-def filters_company(ids): return {'op':'and','conditions':[{'field':'company.basic_info.company_id','type':'in','value':ids},{'op':'or','conditions':[{'field':'job_details.title','type':'(.)','value':'engineer'}]}]}
+def filters_company(ids,request=''):
+    terms=['engineer','data']
+    if re.search(r'(?i)\b(?:machine learning|ml)\b',request): terms=['machine learning','ML']
+    return {'op':'and','conditions':[{'field':'company.basic_info.company_id','type':'in','value':ids},{'op':'or','conditions':[{'field':'job_details.title','type':'(.)','value':term} for term in terms]}]}
 def filters_person(cid): return {'op':'and','conditions':[{'field':'experience.employment_details.current.company_id','type':'=','value':cid},{'op':'or','conditions':[{'field':'experience.employment_details.current.title','type':'(.)','value':'engineering'}]}]}
 def identify(client, run, identifier):
     found=db.query('SELECT company_id FROM inputs WHERE run_id=? AND identifier=?',(run,identifier))
     if found: return
     domain=bool(re.match(r'^[\w-]+(?:\.[\w-]+)+$',identifier.strip()))
-    response=client.post('/company/identify',{'domains' if domain else 'names':[identifier]})
+    payload={'crustdata_company_ids':[int(identifier)]} if identifier.isdigit() else {('domains' if domain else 'names'):[identifier]}
+    response=client.post('/company/identify',payload)
     matches=(response[0].get('matches') or []) if response else []
     if not matches: db.audit(run,None,'IDENTIFY_NOT_FOUND',{'input':identifier}); return
     match=max(matches,key=lambda x:x.get('confidence_score') or 0); co=match.get('company_data') or {}; cid=co.get('crustdata_company_id'); basic=co.get('basic_info') or {}
@@ -55,14 +77,17 @@ def identify(client, run, identifier):
 def pipeline(request='', identifiers=None, run_id=None, simulate_crash_after_stage=None, duplicate_input_test=False, claimed_headcount=None):
     db.init_db(); run=run_id or str(uuid.uuid4()); client=CrustdataClient(run)
     if not run_id: db.execute('INSERT INTO runs VALUES(?,?,?,?,?)',(run,request,'running',db.now(),None))
-    else: db.execute('UPDATE runs SET status=?,error=NULL WHERE id=?',('running',run))
+    else:
+        rows=db.query('SELECT request FROM runs WHERE id=?',(run,))
+        if not rows: raise ValueError('Unknown run id')
+        request=rows[0]['request'] or ''
+        db.execute('UPDATE runs SET status=?,error=NULL WHERE id=?',('running',run))
     try:
-        if identifiers is None:
-            identifiers=re.findall(r'\b(?:[a-zA-Z0-9-]+\.)+[a-zA-Z]{2,}\b',request)
+        if identifiers is None and not run_id:
+            parsed=parse_request(request); identifiers=parsed['identifiers']
             if not identifiers and request.strip():
-                # Natural-language company discovery, not an LLM extraction claim.
-                result=client.post('/company/search',{'search':{'query':request,'mode':'hybrid'},'limit':5})
-                identifiers=[(c.get('basic_info') or {}).get('primary_domain') for c in result.get('companies',[]) if (c.get('basic_info') or {}).get('primary_domain')]
+                identifiers=discover_companies(client,request,parsed['limit'])
+                db.audit(run,None,'COMPANIES_DISCOVERED',{'request':request,'identifiers':identifiers,'note':'Ranked candidates, not verified matches to every constraint'})
         if duplicate_input_test and identifiers and 'Razorpay' not in identifiers: identifiers=list(identifiers)+['Razorpay']
         for identifier in identifiers or []: identify(client,run,identifier.strip())
         companies=db.query('SELECT * FROM companies WHERE run_id=?',(run,))
@@ -70,14 +95,15 @@ def pipeline(request='', identifiers=None, run_id=None, simulate_crash_after_sta
         for co in companies:
             cid=co['company_id']; name=co['name']; domain=co['domain']
             def jobs():
-                data=client.post('/job/search',{'filters':filters_company([cid]),'limit':10,'sorts':[{'field':'metadata.date_added','order':'desc'}],'fields':['job_details','company.basic_info','location','metadata']})
-                return {'jobs':[fact(run,cid,'Indexed engineering job',{'title':(x.get('job_details') or {}).get('title'),'url':(x.get('job_details') or {}).get('url'),'location':(x.get('location') or {}).get('raw'),'date_added':(x.get('metadata') or {}).get('date_added')},'/job/search',x) for x in data.get('job_listings',[])], 'total':fact(run,cid,'Indexed matching postings',data.get('total_count'),'/job/search',{'total_count':data.get('total_count')})}
+                data=client.post('/job/search',{'filters':filters_company([cid],request),'limit':10,'sorts':[{'field':'metadata.date_added','order':'desc'}],'fields':['job_details','company.basic_info','location','metadata']})
+                listings=(data or {}).get('job_listings') or []
+                return {'jobs':[fact(run,cid,'Indexed engineering job',{'title':(x.get('job_details') or {}).get('title') or UNKNOWN,'url':(x.get('job_details') or {}).get('url') or UNKNOWN,'location':(x.get('location') or {}).get('raw') or UNKNOWN,'date_added':(x.get('metadata') or {}).get('date_added') or UNKNOWN},'/job/search',x) for x in listings], 'total':fact(run,cid,'Indexed matching postings',(data or {}).get('total_count'),'/job/search',{'total_count':(data or {}).get('total_count')}), 'missing_jobs':fact(run,cid,'Job listings',None,'/job/search',{'job_listings':listings}) if not listings else None}
             j=stage(run,cid,STAGES[1],jobs,client,simulate_crash_after_stage)
             def enrich():
                 data=client.post('/company/enrich',{'crustdata_company_ids':[cid],'fields':['crustdata_company_id','basic_info','headcount.total','funding']})
                 matches=(data[0].get('matches') or []) if data else []; raw=(matches[0].get('company_data') or {}) if matches else {}; h=(raw.get('headcount') or {}).get('total'); f=raw.get('funding') or {}
                 web=client.post('/web/search/live',{'query':f'{name} company employee headcount total funding raised'})
-                sources=[{'title':x.get('title'),'url':x.get('url'),'snippet':x.get('snippet')} for x in web.get('results',[])[:5]]
+                sources=[{'title':x.get('title'),'url':x.get('url'),'snippet':x.get('snippet')} for x in ((web or {}).get('results') or [])[:5]]
                 claim=fact(run,cid,'Web search results for trust review',sources or None,'/web/search/live',sources)
                 conflicts=[]; claims=[]
                 for source in sources:
@@ -94,7 +120,7 @@ def pipeline(request='', identifiers=None, run_id=None, simulate_crash_after_sta
             def people():
                 data=client.post('/person/search',{'filters':filters_person(cid),'limit':10,'fields':['basic_profile','social_handles','experience','education']})
                 stale=0; picked=None
-                for p in data.get('profiles',[]):
+                for p in ((data or {}).get('profiles') or []):
                     ok,reason=verify_active_decision_maker(p,cid,name)
                     if not ok:
                         if 'former' in reason or 'another employer' in reason or 'inactive' in reason:
@@ -110,6 +136,8 @@ def pipeline(request='', identifiers=None, run_id=None, simulate_crash_after_sta
                 if e['conflicts']: reasons+=e['conflicts']
                 # Unconfirmed comparisons and missing leaders require review before dispatch.
                 if p['leader']['value']==UNKNOWN: reasons.append('No active leader could be verified')
+                smoke=provision_sandbox(run,cid)
+                facts['sandbox_provisioning']=smoke
                 doc=build_report(run,co,facts)
                 if reasons: db.execute('INSERT OR IGNORE INTO exception_queue(run_id,company_id,reasons,created_at) VALUES(?,?,?,?)',(run,cid,db.dump(reasons),db.now()))
                 else:
@@ -129,6 +157,16 @@ def pipeline(request='', identifiers=None, run_id=None, simulate_crash_after_sta
         db.execute('UPDATE runs SET status=?,error=? WHERE id=?',('interrupted',str(ex),run)); raise
     return run
 
+def provision_sandbox(run,cid):
+    # A database round-trip proves only local tenant isolation; it sends no HTTP webhook.
+    key=db.key(run,cid)
+    db.execute('INSERT OR IGNORE INTO sandbox_tenants VALUES(?,?,?,?,?)',(run,cid,key,'pending',db.now()))
+    row=db.query('SELECT tenant_key FROM sandbox_tenants WHERE run_id=? AND company_id=?',(run,cid))
+    ok=bool(row and row[0]['tenant_key']==key)
+    status='local round-trip passed' if ok else 'local round-trip failed'
+    db.execute('UPDATE sandbox_tenants SET smoke_status=? WHERE run_id=? AND company_id=?',(status,run,cid))
+    db.audit(run,cid,'SANDBOX_SMOKE_TEST',{'status':status,'webhook':'not sent: receiver and signing scheme not configured'})
+    return {'tenant_key':key,'local_smoke_test':status,'webhook_smoke_test':'UNVERIFIED: no configured receiver or validated signing scheme'}
 def watcher_payloads(cid,person):
     url=person.get('leader',{}).get('value',{}); url=url.get('url') if isinstance(url,dict) else None
     config={'trigger':{'type':'interval','every_hours':24},'refresh_frequency_days':30}
@@ -139,7 +177,7 @@ def register_watch_configs(run,cid,person):
 def build_report(run,co,facts):
     def show(x): return f"{x['value']} [citation #{x['citation_id']}]"
     e=facts['enrichment']; p=facts['decision_maker']; j=facts['hiring']; i=facts['company']
-    jobs='\n'.join('- '+show(x) for x in j['jobs']) or '- '+UNKNOWN
+    jobs='\n'.join('- '+show(x) for x in j['jobs']) or '- '+show(j['missing_jobs']) if j.get('missing_jobs') else '\n'.join('- '+show(x) for x in j['jobs']) or '- '+UNKNOWN
     snippet='''import os, requests\nBASE = "https://api.crustdata.com"\nheaders = {"Authorization": "Token " + os.environ["CRUSTDATA_API_KEY"], "x-api-version": "2025-11-01"}\npayload = {"filters": {"op": "and", "conditions": [{"field": "company.basic_info.company_id", "type": "in", "value": [%s]}, {"field": "job_details.title", "type": "(.)", "value": "engineer"}]}, "sorts": [{"field": "metadata.date_added", "order": "desc"}], "limit": 10, "fields": ["job_details", "company.basic_info", "location", "metadata"]}\nr = requests.post(BASE + "/job/search", json=payload, headers=headers, timeout=30)\nr.raise_for_status()\nfor job in r.json().get("job_listings", []):\n    print(job.get("company", {}).get("basic_info", {}).get("crustdata_company_id"), job.get("job_details", {}).get("title"), job.get("metadata", {}).get("date_added"))''' % co['company_id']
     benchmark=[]
     for peer in db.query('SELECT * FROM companies WHERE run_id=?',(run,)):

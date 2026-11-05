@@ -25,7 +25,7 @@ with st.sidebar:
     custom=st.text_area('Company domains, names, or industry request',value='razorpay.com, freshworks.com' if preset.startswith('Trust') else '',placeholder='e.g. Indian fintech companies hiring engineers')
     crash=st.checkbox('Simulate Mid-Run Crash (Stage 3)')
     if st.button('▶  Start mission',type='primary',use_container_width=True):
-        ids=['razorpay.com','freshworks.com','Razorpay'] if preset.startswith('Live') else (['razorpay.com'] if preset.startswith('Vendor') else ([x.strip() for x in custom.split(',') if x.strip()] if ',' in custom else None))
+        ids=['razorpay.com','freshworks.com','Razorpay'] if preset.startswith('Live') else (['razorpay.com'] if preset.startswith('Vendor') else None)
         try:
             with st.spinner('Researching and checkpointing…'):
                 run=pipeline(custom or preset,ids,simulate_crash_after_stage=STAGES[2] if crash else None,claimed_headcount=15000 if preset.startswith('Vendor') else None)
@@ -59,6 +59,8 @@ with tabs[0]:
             for i,s in enumerate(STAGES):
                 item=by.get(s); cols[i].metric(f'{i+1:02} / '+['IDENTIFY','HIRING','TRUST','LEADER','DELIVER'][i], '✓ Complete' if item else '○ Pending',f"{item['latency']:.2f}s · {item['credits']:.2f} cr" if item else None)
             for a in db.query('SELECT * FROM audit WHERE run_id=? AND company_id=? ORDER BY id DESC',(run,co['company_id'])): st.caption(f"{a['event']} · {a['detail'][:250]}")
+            tenant=db.query('SELECT smoke_status FROM sandbox_tenants WHERE run_id=? AND company_id=?',(run,co['company_id']))
+            if tenant: st.caption(f"Local sandbox tenant: {tenant[0]['smoke_status']}. Webhook delivery: unverified; no receiver configured.")
         status=next((r for r in runs if r['id']==run),None)
         if status and status['error']: st.warning(status['error'])
 with tabs[1]:

@@ -40,6 +40,7 @@ def init_db():
                 else: prev=row['record_hash']
         c.execute('CREATE TABLE IF NOT EXISTS savings(id INTEGER PRIMARY KEY, run_id TEXT, source TEXT, endpoint TEXT, amount REAL, basis TEXT, created_at TEXT)')
         c.execute('CREATE TABLE IF NOT EXISTS watcher_configs(run_id TEXT, company_id INTEGER, kind TEXT, endpoint TEXT, payload TEXT, status TEXT, PRIMARY KEY(run_id,company_id,kind))')
+        c.execute('CREATE TABLE IF NOT EXISTS sandbox_tenants(run_id TEXT, company_id INTEGER, tenant_key TEXT, smoke_status TEXT, created_at TEXT, PRIMARY KEY(run_id,company_id))')
 def query(sql, args=()):
     with connect() as c: return [dict(x) for x in c.execute(sql,args).fetchall()]
 def execute(sql,args=()):
