@@ -8,7 +8,7 @@ Install `pip install -r requirements.txt` and run `streamlit run app.py`. The fi
 
 Select Live Crustdata and configure `CRUSTDATA_API_KEY` in Streamlit secrets or the environment. Live requests use the SQLite cache. On missing credentials, HTTP errors or network failure, a logged synthetic fallback supplies an explicitly unverified company placeholder; a synthetic standing bench keeps the demonstration usable. It is not evidence of live hiring or verified employment. Synthetic benchmark candidates can appear alongside live candidates; check citation endpoints and hashes before interpreting a match. Empty fields score zero; an `Ex-` headline is a transition signal, not verification of departure. No named person's affiliation or identity is independently verified by this project.
 
-The bundled snapshot has fixed meeting dates at build time. If it is deployed after those dates, start a new flagship batch to book future slots. Meetings use IST business hours, with local conflict checks. Rescheduling accepts a weekday and a 12-hour time, such as `Sunday 4:00 PM IST`; it is not a general natural-language agent. Reminders require the UI action or an external caller to run `send_reminders`; they are not automatically scheduled by a daemon. RSVP links and calendar notifications are sandbox payloads only. API cache entries do not expire; delete cache rows to refresh them.
+On cold-start restoration, expired fixture meetings are moved into future IST business hours and their calendar notifications are updated. Restored work-parties start on Saturday. Meetings use IST business hours, with local conflict checks. Rescheduling accepts a weekday and a 12-hour time, such as `Sunday 4:00 PM IST`; it is not a general natural-language agent. Reminders require the UI action or an external caller to run `send_reminders`; they are not automatically scheduled by a daemon. RSVP links and calendar notifications are sandbox payloads only. API cache entries do not expire; delete cache rows to refresh them.
 
 ## Note on evolution
 
@@ -56,3 +56,18 @@ The ledger detects edits relative to a trusted head. Someone controlling the dat
 Verify `/person/enrich` and live API schemas with real fixtures; establish real candidate consent and independently verify identity; use robust cross-company entity resolution and better career/tenure evidence; replace the synthetic standing bench with sourced records; obtain validated customer interviews, terms, and legal review; add durable hosted storage, authenticated partner approval, automated reminder workers, actual availability negotiation, external calendar integration, observability, and rate-limit controls. Scoring and curated stations are prototypes, not investment decisions or claims of market demand.
 
 Run `python -m py_compile app.py service_engine.py scheduler_service.py crustdata_client.py db.py` and `python -m unittest discover -v` for the local checks.
+
+
+## Development
+
+Install development tools with `pip install -r requirements-dev.txt`. Run `python -m ruff check .`, `python -m ruff format --check .`, and `python -m unittest discover -v`. The tests use isolated temporary databases and cover fallback, cache corruption, collision negotiation, reminders, recovery, ledger tampering, and Streamlit interactions.
+
+- `matching.py`: profile normalization and the four-pillar deterministic score.
+- `service_engine.py`: company discovery, market evidence, candidate discovery, and routing; each stage has an independent checkpoint.
+- `scheduler_service.py`: business-hour slot selection, calendar payloads, rescheduling and sandbox notifications. Conflicts are scoped to a run so separate demo sessions do not block each other.
+- `crustdata_client.py`: secrets, response validation, cache, and labeled fallback.
+- `db.py`: database schema, transactions, citations and snapshot hydration.
+- `bootstrap.py`: startup restoration and expired fixture meeting refresh.
+- `app.py`: the five-tab Streamlit interface.
+
+Rebuild the bundled synthetic snapshot after fixture or generation changes with `python scripts/build_demo_seed.py`. This uses a separate temporary database and checks the resulting citation ledger before writing the bundle. Runtime data and secrets are excluded from Git.
