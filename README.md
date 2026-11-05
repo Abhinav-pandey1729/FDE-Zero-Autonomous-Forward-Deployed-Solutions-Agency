@@ -1,21 +1,58 @@
-# Foundry-Zero
+# Foundry-Zero: Autonomous Pre-Day-0 Venture Studio & Co-Founder Matchmaker
 
-A local venture-studio prototype with two founder pathways, a Crustdata client and cache, field-level hash-chained citations, resumable checkpoints, and a sandbox scheduler. No notifications are sent externally.
+Foundry-Zero replaces parts of three services: pre-seed venture scouting, co-founder matchmaking, and event/calendar operations. It resolves company aliases, examines indexed hiring and funding signals, scores founder pairs across four evidence-linked pillars, and routes stronger matches to a 1-on-1 thesis and lower-scoring matches to a work-party. Invites and reminders stay in a local sandbox; the SAFE is a conditional discussion draft, not an investment commitment.
 
-Install `pip install -r requirements.txt`, then run `streamlit run app.py`. Choose **Demo dataset** for clearly labeled synthetic records, or set `CRUSTDATA_API_KEY` in `.env` and choose **Live Crustdata**. Live data availability and response shapes depend on your Crustdata access. API cache entries do not expire automatically; delete cache rows to refresh them. Run tests with `python -m unittest discover -v`.
+## Run locally and on Streamlit Cloud
 
-Citations provide provenance for deterministic heuristics, not independent verification of profile claims or proof of market demand. The ledger detects changes relative to its trusted head; export and retain that head outside SQLite to detect a complete rewrite. The $250,000 SAFE is a conditional discussion draft, not a binding funding commitment. Dates and calendars use UTC; sandbox participants are internal IDs and do not represent delivered invitations. Credit savings are not estimated without reliable pricing.
+Install `pip install -r requirements.txt` and run `streamlit run app.py`. The first start hydrates a small bundled **synthetic** flagship snapshot, including both pathways, an exception and citations. All example people and job postings are fictional. The snapshot is a demonstration, not cached live Crustdata. Cloud local SQLite is ephemeral; production deployment needs durable storage, a trusted externally retained ledger head, access controls, and a real notification integration.
 
-## Deploy on Streamlit Community Cloud
+Select Live Crustdata and configure `CRUSTDATA_API_KEY` in Streamlit secrets or the environment. Live requests use the SQLite cache. On missing credentials, HTTP errors or network failure, a logged synthetic fallback supplies an explicitly unverified company placeholder; a synthetic standing bench keeps the demonstration usable. It is not evidence of live hiring or verified employment. Synthetic benchmark candidates can appear alongside live candidates; check citation endpoints and hashes before interpreting a match. Empty fields score zero; an `Ex-` headline is a transition signal, not verification of departure. No named person's affiliation or identity is independently verified by this project.
 
-1. Sign in at <https://share.streamlit.io> with the GitHub account that owns this repo and authorize access to it.
-2. **Create app** > **Deploy a public app from GitHub**: repository `Abhinav-pandey1729/FDE-Zero-Autonomous-Forward-Deployed-Solutions-Agency`, branch `main`, main file path `app.py`.
-3. **Advanced settings** > **Secrets**, paste:
+The bundled snapshot has fixed meeting dates at build time. If it is deployed after those dates, start a new flagship batch to book future slots. Meetings use IST business hours, with local conflict checks. Rescheduling accepts a weekday and a 12-hour time, such as `Sunday 4:00 PM IST`; it is not a general natural-language agent. Reminders require the UI action or an external caller to run `send_reminders`; they are not automatically scheduled by a daemon. RSVP links and calendar notifications are sandbox payloads only. API cache entries do not expire; delete cache rows to refresh them.
 
-```toml
-CRUSTDATA_API_KEY = "your_crustdata_api_key_here"
+## Note on evolution
+
+The team's account of the exploration: at 12:30 AM, a `/person/search` result for Razorpay `#897127` had an `Ex-Razorpay` headline while the current-employment filter still matched the company. That observation motivated the pivot from FDE-Zero toward a founder discovery workflow. This repository does not bundle that live record, so the example cannot be independently verified from the fixtures here.
+
+## Engineering approaches evaluated
+
+| Approach | Benefit | Limitation |
+|---|---|---|
+| Pure ReAct chat agent | Flexible exploration | Harder to replay, audit, and prevent duplicate actions |
+| One-size-fits-all forced matching | Simple routing | Forces weak matches into 1-on-1 meetings |
+| Checkpointed two-pathway engine | Replayable stages, citations, and deterministic >=50% thesis vs. <50% mixer routing | Heuristics are not proof of founder chemistry and need human validation |
+
+## Hardest case
+
+A former-employer headline can disagree with a current-employment match: preserve both signals and do not claim either is independently verified. Crustdata's filter path may use `company_id` while returned experience can use `crustdata_company_id`; the matcher accepts both. Alias resolution stores inputs against a canonical company ID, so `Razorpay` and `razorpay.com` do not create duplicate company rows. Unverified identity cases enter the partner queue before invitations.
+
+## Architecture
+
+The Mermaid source below renders directly on GitHub and can be copied into the submission's diagram tool.
+
+```mermaid
+flowchart LR
+    UI[Streamlit dashboard] --> Engine[Checkpointed discovery engine]
+    Engine --> Client[Crustdata client]
+    Client --> API[Crustdata API]
+    Client --> Cache[(SQLite API cache)]
+    Client --> Fallback[Synthetic fallback and audit]
+    Engine --> Ledger[(SHA-256 citation chain)]
+    Engine --> Match[Four-pillar pair scoring]
+    Match -->|at least 50%| Thesis[Thesis and conditional SAFE]
+    Match -->|below 50%| Cohort[Work-party cohort]
+    Match -->|identity conflict| Review[Partner exception queue]
+    Thesis --> Scheduler[IST scheduler]
+    Cohort --> Scheduler
+    Review --> Scheduler
+    Scheduler --> Outbox[(Idempotent sandbox outbox and ICS)]
+    Engine --> Checkpoints[(SQLite checkpoints)]
 ```
 
-4. **Deploy**. Live Crustdata mode reads the key via `st.secrets` and falls back to `CRUSTDATA_API_KEY` in `.env` for local runs. `python-dotenv` is only needed for that local fallback.
+The ledger detects edits relative to a trusted head. Someone controlling the database can rewrite the entire chain; retain the displayed head externally. Estimates count cache and checkpoint reuse, not monetary savings or guaranteed credits.
 
-Notes: the Community Cloud filesystem is ephemeral, so the SQLite database (`foundry_zero.db`) resets whenever the app sleeps or redeploys. Keep the **Demo dataset** source for shareable links when you do not want live API credit use.
+## Left out for the eight-hour build / next steps
+
+Verify `/person/enrich` and live API schemas with real fixtures; establish real candidate consent and independently verify identity; use robust cross-company entity resolution and better career/tenure evidence; replace the synthetic standing bench with sourced records; obtain validated customer interviews, terms, and legal review; add durable hosted storage, authenticated partner approval, automated reminder workers, actual availability negotiation, external calendar integration, observability, and rate-limit controls. Scoring and curated stations are prototypes, not investment decisions or claims of market demand.
+
+Run `python -m py_compile app.py service_engine.py scheduler_service.py crustdata_client.py db.py` and `python -m unittest discover -v` for the local checks.

@@ -11,7 +11,7 @@ class CrustdataClient:
             import streamlit as st
             if hasattr(st,'secrets'): st_token=st.secrets.get('CRUSTDATA_API_KEY') or st.secrets.get('CRUSTDATA_API_TOKEN')
         except Exception: pass
-        self.token=os.getenv('CRUSTDATA_API_KEY') or os.getenv('CRUSTDATA_API_TOKEN') or st_token
+        self.token=st_token or os.getenv('CRUSTDATA_API_KEY') or os.getenv('CRUSTDATA_API_TOKEN')
     def post(self,endpoint,payload):
         body=db.dump(payload); key=hashlib.sha256(body.encode()).hexdigest(); namespace=endpoint if self.mode=='live' else 'demo:'+endpoint
         rows=db.query('SELECT response FROM cache WHERE endpoint=? AND payload_hash=?',(namespace,key))
@@ -21,13 +21,12 @@ class CrustdataClient:
             from demo_data import response
             data=response(endpoint,payload)
         else:
-            if not self.token: raise RuntimeError('Set CRUSTDATA_API_KEY in .env for live requests, or select the explicitly labeled demo dataset.')
-            for attempt in range(4):
-                try:
-                    r=httpx.post('https://api.crustdata.com'+endpoint,json=payload,headers={'Authorization':'Token '+self.token,'x-api-version':'2025-11-01'},timeout=45)
-                    if r.status_code==429 and attempt<3: time.sleep(min(2**attempt,8)); continue
-                    r.raise_for_status(); data=r.json(); break
-                except httpx.TransportError:
-                    if attempt==3: raise
-                    time.sleep(2**attempt)
+            try:
+                if not self.token: raise RuntimeError('API key unavailable')
+                r=httpx.post('https://api.crustdata.com'+endpoint,json=payload,headers={'Authorization':'Token '+self.token,'x-api-version':'2025-11-01'},timeout=5)
+                r.raise_for_status(); data=r.json()
+            except (httpx.HTTPError, ValueError, RuntimeError) as exc:
+                db.audit(self.run_id,'RESILIENCE_FALLBACK_TRIGGERED',{'endpoint':endpoint,'reason':str(exc)[:200],'source':'synthetic fixture; not live Crustdata'})
+                from demo_data import fallback_response
+                return fallback_response(endpoint,payload)
         db.execute('INSERT OR IGNORE INTO cache VALUES(?,?,?,?,?)',(namespace,key,body,db.dump(data),db.now())); return data

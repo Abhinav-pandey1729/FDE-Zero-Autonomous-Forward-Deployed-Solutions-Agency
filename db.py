@@ -1,4 +1,5 @@
-import hashlib, json, sqlite3
+import gzip, hashlib, json, os, sqlite3, tempfile
+from pathlib import Path
 from datetime import datetime, timezone
 DB = 'foundry_zero.db'
 def now(): return datetime.now(timezone.utc).isoformat()
@@ -17,6 +18,7 @@ def init_db():
     with connect() as c: c.executescript('''
     CREATE TABLE IF NOT EXISTS runs(id TEXT PRIMARY KEY, identifiers TEXT, mode TEXT, status TEXT, created_at TEXT, error TEXT);
     CREATE TABLE IF NOT EXISTS cache(endpoint TEXT, payload_hash TEXT, payload TEXT, response TEXT, created_at TEXT, PRIMARY KEY(endpoint,payload_hash));
+    CREATE TABLE IF NOT EXISTS audit(id INTEGER PRIMARY KEY, run_id TEXT, event TEXT, detail TEXT, created_at TEXT);
     CREATE TABLE IF NOT EXISTS savings(id INTEGER PRIMARY KEY, run_id TEXT, source TEXT, endpoint TEXT, amount REAL, created_at TEXT);
     CREATE TABLE IF NOT EXISTS companies(run_id TEXT, company_id TEXT, name TEXT, domain TEXT, data TEXT, PRIMARY KEY(run_id,company_id));
     CREATE TABLE IF NOT EXISTS aliases(run_id TEXT, alias TEXT, company_id TEXT, PRIMARY KEY(run_id,alias));
@@ -47,3 +49,17 @@ def checkpoint(run,scope,stage,data): execute('INSERT OR REPLACE INTO checkpoint
 def load(run,scope,stage):
     rows=query('SELECT data FROM checkpoints WHERE run_id=? AND scope=? AND stage=?',(run,str(scope),stage)); return json.loads(rows[0]['data']) if rows else None
 
+
+def audit(run,event,detail): execute("INSERT INTO audit(run_id,event,detail,created_at) VALUES(?,?,?,?)",(run,event,dump(detail),now()))
+
+def hydrate_flagship_if_missing():
+    """Atomically publish a bundled synthetic seed for a fresh container."""
+    if os.path.exists(DB): return False
+    source=Path(__file__).with_name('flagship_seed.sqlite.gz')
+    directory=os.path.dirname(os.path.abspath(DB))
+    fd,tmp=tempfile.mkstemp(prefix='.foundry-seed-',dir=directory)
+    try:
+        with os.fdopen(fd,'wb') as out, gzip.open(source,'rb') as inp: out.write(inp.read())
+        try: os.link(tmp,DB); return True
+        except FileExistsError: return False
+    finally: os.unlink(tmp)
