@@ -1,0 +1,15 @@
+# Environment variables and secrets
+.env
+*.env
+
+# Python cache & bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache/
+
+# IDE & Editor configs
+.cursor/
+.vscode/
+.idea/
