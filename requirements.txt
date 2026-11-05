@@ -1,6 +1,0 @@
-fastapi
-uvicorn
-streamlit>=1.57
-httpx
-pydantic
-python-dotenv
