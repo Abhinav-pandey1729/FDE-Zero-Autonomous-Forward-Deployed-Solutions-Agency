@@ -4,7 +4,14 @@ from dotenv import load_dotenv
 import db
 load_dotenv()
 class CrustdataClient:
-    def __init__(self,run_id=None,mode='live'): self.run_id=run_id; self.mode=mode; self.token=os.getenv('CRUSTDATA_API_KEY') or os.getenv('CRUSTDATA_API_TOKEN')
+    def __init__(self,run_id=None,mode='live'):
+        self.run_id=run_id; self.mode=mode
+        st_token=None
+        try:
+            import streamlit as st
+            if hasattr(st,'secrets'): st_token=st.secrets.get('CRUSTDATA_API_KEY') or st.secrets.get('CRUSTDATA_API_TOKEN')
+        except Exception: pass
+        self.token=os.getenv('CRUSTDATA_API_KEY') or os.getenv('CRUSTDATA_API_TOKEN') or st_token
     def post(self,endpoint,payload):
         body=db.dump(payload); key=hashlib.sha256(body.encode()).hexdigest(); namespace=endpoint if self.mode=='live' else 'demo:'+endpoint
         rows=db.query('SELECT response FROM cache WHERE endpoint=? AND payload_hash=?',(namespace,key))
