@@ -204,3 +204,43 @@ class EdgeCases(unittest.TestCase):
         self.assertIn("DTSTART:20300601T100000Z", lines)
         self.assertIn("DTEND:20300601T110000Z", lines)
         self.assertIn("END:VCALENDAR", lines)
+
+    def test_company_switching_and_badge_accuracy(self):
+        from service_engine import pipeline
+        db.init_db()
+
+        # 1. When Zomato & Swiggy are requested, results must reflect FoodTech & Quick Commerce, NOT Razorpay
+        run = pipeline(["Zomato", "Swiggy"], mode="demo")
+        cos = [c["name"] for c in db.query("SELECT name FROM companies WHERE run_id=?", (run,))]
+        self.assertIn("Zomato", cos)
+        self.assertIn("Swiggy", cos)
+
+        matches = db.query("""
+            SELECT m.founder_a, m.founder_b, m.score, m.pathway, m.thesis, m.breakdown, ca.name na, cb.name nb 
+            FROM matches m 
+            JOIN candidates ca ON m.run_id=ca.run_id AND m.founder_a=ca.person_id 
+            JOIN candidates cb ON m.run_id=cb.run_id AND m.founder_b=cb.person_id 
+            WHERE m.run_id=? 
+            ORDER BY m.score DESC
+        """, (run,))
+
+        self.assertTrue(matches)
+        top = matches[0]
+        # Top match MUST be Zomato/Swiggy founders (e.g. Abhishek Sagar x Priya Sharma), NOT Asha Rao x Arjun Sen
+        self.assertIn(top["na"], ("Abhishek Sagar", "Priya Sharma", "Gursimran Singh", "Ananya Roy"))
+        self.assertIn("FoodTech & Quick Commerce", top["thesis"])
+
+        # 2. Check inline badge accuracy on the matches
+        for m in matches:
+            bd = json.loads(m["breakdown"])
+            ped = bd["Pedigree"]
+            ped_badges = " ".join(ped.get("badges", []))
+            if ped["reason"] == "No shared school established":
+                self.assertNotIn("Absent in Crustdata graph — Scored 0 without guessing", ped_badges)
+                self.assertTrue("Alumni Network:" in ped_badges or "Shared Alma Mater:" in ped_badges)
+
+            dom = bd["Domain"]
+            dom_badges = " ".join(dom.get("badges", []))
+            if "complementary roles" in dom["reason"]:
+                self.assertNotIn("Absent in Crustdata graph — Scored 0 without guessing", dom_badges)
+                self.assertTrue("Domain:" in dom_badges or "Cross-Domain:" in dom_badges or "Domain Alignment:" in dom_badges)

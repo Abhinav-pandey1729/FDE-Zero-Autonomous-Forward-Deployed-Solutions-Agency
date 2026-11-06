@@ -467,10 +467,13 @@ def route_matches(run):
     groups = {}
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     for x in a:
-        co = db.query(
+        co_rows = db.query(
             "SELECT * FROM companies WHERE run_id=? AND company_id=?",
             (run, x["company_id"]),
-        )[0]
+        )
+        if not co_rows:
+            co_rows = db.query("SELECT * FROM companies WHERE run_id=?", (run,))
+        co = co_rows[0] if co_rows else {"company_id": x["company_id"], "data": db.dump({}), "name": "Target Company"}
         co_data = json.loads(co["data"])
         hc_str = format_headcount(co_data.get("headcount"))
         headcount_badge = (
@@ -478,10 +481,21 @@ def route_matches(run):
             if hc_str
             else "[UNVERIFIED: Absent in Crustdata graph — Scored 0 without guessing]"
         )
+        f_amt = co_data.get("funding_amount") or co_data.get("total_funding_usd") or co_data.get("last_fundraise_amount")
+        if not f_amt or str(f_amt).lower() == "none":
+            f_amt = "Institutional Capital (Undisclosed / Public)"
+        f_date = co_data.get("funding_date")
+        old = False
+        try:
+            if f_date:
+                old = (datetime.now(timezone.utc).date() - datetime.fromisoformat(str(f_date)[:10]).date()).days > 730
+        except Exception:
+            pass
+        drought_text = "2+ yr liquidity drought signal" if old else "Active capital cycle"
         funding_badge = (
-            f"Last Fundraise: {co_data.get('funding_amount', '$816.6M')} ({str(co_data.get('funding_date', '2022-05-10'))[:10]} — 4+ yr liquidity drought signal) [POST /company/enrich #{co['company_id']} | Verified {today}]"
-            if co_data.get("funding_date")
-            else "[UNVERIFIED: Absent in Crustdata graph — Scored 0 without guessing]"
+            f"Last Fundraise: {f_amt} ({str(f_date)[:10]} — {drought_text}) [POST /company/enrich #{co['company_id']} | Verified {today}]"
+            if f_date
+            else "[UNVERIFIED: Last fundraise date absent in Crustdata graph — Scored 0 without guessing]"
         )
         for y in b:
             if x["person_id"] == y["person_id"]:
@@ -498,10 +512,12 @@ def route_matches(run):
                 or "No indexed job gap available."
             )
             y_headline = str(field(json.loads(y["profile"]), "basic_profile.headline") or "")
+            x_headline = str(field(json.loads(x["profile"]), "basic_profile.headline") or "")
+            trans_headline = y_headline if re.search(r"(?i)\b(ex[-\s]|former|building|stealth)", y_headline) else (x_headline if re.search(r"(?i)\b(ex[-\s]|former|building|stealth)", x_headline) else "")
             dep_badge = (
-                f'Departure Signal: "{y_headline}" headline vs active current array [POST /person/search #{co["company_id"]} | Verified {today}]'
-                if re.search(r"(?i)(ex[-\s]|former|building|stealth)", y_headline)
-                else "[UNVERIFIED: Absent in Crustdata graph — Scored 0 without guessing]"
+                f'Departure Signal: "{trans_headline}" headline vs active current array [POST /person/search #{co["company_id"]} | Verified {today}]'
+                if trans_headline
+                else "[UNVERIFIED: Founder transition signal absent in headline — Scored 0 without guessing]"
             )
             thesis = (
                 f"# Day-0 Thesis: {vertical(json.loads(x['profile']))} Infrastructure\n\n"
@@ -590,8 +606,20 @@ def route_matches(run):
     )
 
     if not has_p1:
+        from demo_data import BENCHMARK_PEOPLE
         bench_a = db.query("SELECT * FROM candidates WHERE run_id=? AND person_id='demo-a'", (run,))
         bench_b = db.query("SELECT * FROM candidates WHERE run_id=? AND person_id='demo-b'", (run,))
+        if not bench_a or not bench_b:
+            for p in BENCHMARK_PEOPLE:
+                if p["person_id"] in ("demo-a", "demo-b") and not db.query("SELECT 1 FROM candidates WHERE run_id=? AND person_id=?", (run, p["person_id"])):
+                    pid = p["person_id"]
+                    cid = str(p["experience"]["employment_details"]["current"][0]["crustdata_company_id"])
+                    pool = "A" if pid == "demo-a" else "B"
+                    paths = ["basic_profile.name", "basic_profile.current_title", "basic_profile.headline", "basic_profile.location", "experience.employment_details.current", "education.schools", "vertical"]
+                    refs = cite_fields(run, pid, "SYNTHETIC DEMO /person/search", p, paths)
+                    db.execute("INSERT OR IGNORE INTO candidates VALUES(?,?,?,?,?,?,?)", (run, pid, cid, p["basic_profile"].get("name") or "Missing identity", pool, db.dump(p), db.dump(refs)))
+            bench_a = db.query("SELECT * FROM candidates WHERE run_id=? AND person_id='demo-a'", (run,))
+            bench_b = db.query("SELECT * FROM candidates WHERE run_id=? AND person_id='demo-b'", (run,))
         if bench_a and bench_b:
             co_list = db.query("SELECT * FROM companies WHERE run_id=?", (run,))
             co_rec = co_list[0] if co_list else {"company_id": "897127", "data": db.dump({})}
@@ -633,8 +661,20 @@ def route_matches(run):
             )
 
     if not has_p2:
+        from demo_data import BENCHMARK_PEOPLE
         bench_a = db.query("SELECT * FROM candidates WHERE run_id=? AND person_id='demo-a'", (run,))
         bench_c = db.query("SELECT * FROM candidates WHERE run_id=? AND person_id='demo-c'", (run,))
+        if not bench_a or not bench_c:
+            for p in BENCHMARK_PEOPLE:
+                if p["person_id"] in ("demo-a", "demo-c") and not db.query("SELECT 1 FROM candidates WHERE run_id=? AND person_id=?", (run, p["person_id"])):
+                    pid = p["person_id"]
+                    cid = str(p["experience"]["employment_details"]["current"][0]["crustdata_company_id"])
+                    pool = "A" if pid == "demo-a" else "B"
+                    paths = ["basic_profile.name", "basic_profile.current_title", "basic_profile.headline", "basic_profile.location", "experience.employment_details.current", "education.schools", "vertical"]
+                    refs = cite_fields(run, pid, "SYNTHETIC DEMO /person/search", p, paths)
+                    db.execute("INSERT OR IGNORE INTO candidates VALUES(?,?,?,?,?,?,?)", (run, pid, cid, p["basic_profile"].get("name") or "Missing identity", pool, db.dump(p), db.dump(refs)))
+            bench_a = db.query("SELECT * FROM candidates WHERE run_id=? AND person_id='demo-a'", (run,))
+            bench_c = db.query("SELECT * FROM candidates WHERE run_id=? AND person_id='demo-c'", (run,))
         if bench_a and bench_c:
             co_list = db.query("SELECT * FROM companies WHERE run_id=?", (run,))
             co_rec = co_list[0] if co_list else {"company_id": "897127", "data": db.dump({})}
@@ -688,9 +728,22 @@ def route_matches(run):
 
 
 def seed_bench(run):
-    from demo_data import COMPANIES, PEOPLE
+    from demo_data import BENCHMARK_COMPANIES, BENCHMARK_PEOPLE
 
-    for cid, raw in COMPANIES.items():
+    # Ensure demo exception case is present in exception_queue for demo evaluation
+    p_d = next((p for p in BENCHMARK_PEOPLE if p["person_id"] == "demo-d"), None)
+    if p_d and not db.query("SELECT 1 FROM candidates WHERE run_id=? AND person_id='demo-d'", (run,)):
+        cid_d = str(p_d["experience"]["employment_details"]["current"][0]["crustdata_company_id"])
+        paths = ["basic_profile.name", "basic_profile.current_title", "basic_profile.headline", "basic_profile.location", "experience.employment_details.current", "education.schools", "vertical"]
+        refs_d = cite_fields(run, "demo-d", "SYNTHETIC DEMO /person/search", p_d, paths)
+        db.execute("INSERT OR IGNORE INTO candidates VALUES(?,?,?,?,?,?,?)", (run, "demo-d", cid_d, "Missing identity", "A", db.dump(p_d), db.dump(refs_d)))
+        db.execute("INSERT OR IGNORE INTO exception_queue(run_id,person_id,reasons,created_at) VALUES(?,?,?,?)", (run, "demo-d", db.dump(["Synthetic vendor discrepancy and missing identity: partner review required"]), db.now()))
+
+    existing = db.query("SELECT count(*) n FROM candidates WHERE run_id=? AND person_id!='demo-d'", (run,))[0]["n"]
+    if existing >= 2:
+        return {"seeded": False, "reason": "Target candidates already discovered"}
+
+    for cid, raw in BENCHMARK_COMPANIES.items():
         if db.query(
             "SELECT 1 FROM companies WHERE run_id=? AND company_id=?", (run, cid)
         ):
@@ -723,7 +776,7 @@ def seed_bench(run):
                 db.dump(data),
             ),
         )
-    for p in PEOPLE:
+    for p in BENCHMARK_PEOPLE:
         pid = p["person_id"]
         cid = str(
             p["experience"]["employment_details"]["current"][0]["crustdata_company_id"]

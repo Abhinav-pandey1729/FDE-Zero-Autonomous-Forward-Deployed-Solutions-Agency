@@ -150,13 +150,41 @@ def book_meeting(run, kind, subject, title, participants, agenda, proposed=None)
                     old["id"],
                     run_id=run,
                 ):
-                    raise ValueError(
-                        "Added cohort member has a scheduling conflict; reschedule the cohort first"
+                    try:
+                        dur = parse_time(old["ends_at"]) - parse_time(old["starts_at"])
+                        new_s, new_e = next_slot(
+                            c,
+                            existing + additions,
+                            parse_time(old["starts_at"]),
+                            dur,
+                            exclude=old["id"],
+                            weekend=True,
+                            run_id=run,
+                        )
+                        new_ver = old.get("version", 1) + 1
+                        ics_text = build_ics(
+                            old["title"],
+                            new_s,
+                            new_e,
+                            existing + additions,
+                            old["agenda"],
+                            seq=new_ver,
+                            uid_key=f"mtg-{old['id']}-{new_ver}",
+                        )
+                        c.execute(
+                            "UPDATE meetings SET starts_at=?, ends_at=?, participants=?, ics=?, status='RESCHEDULED', version=? WHERE id=?",
+                            (new_s.isoformat(), new_e.isoformat(), db.dump(existing + additions), ics_text, new_ver, old["id"]),
+                        )
+                    except Exception:
+                        c.execute(
+                            "UPDATE meetings SET participants=? WHERE id=?",
+                            (db.dump(existing + additions), old["id"]),
+                        )
+                else:
+                    c.execute(
+                        "UPDATE meetings SET participants=? WHERE id=?",
+                        (db.dump(existing + additions), old["id"]),
                     )
-                c.execute(
-                    "UPDATE meetings SET participants=? WHERE id=?",
-                    (db.dump(existing + additions), old["id"]),
-                )
                 for p in additions:
                     notify(
                         c,

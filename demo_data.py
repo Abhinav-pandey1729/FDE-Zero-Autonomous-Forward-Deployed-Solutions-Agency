@@ -1,5 +1,6 @@
 # Clearly labeled synthetic demonstration records; never represented as live Crustdata.
-COMPANIES = {
+
+BENCHMARK_COMPANIES = {
     "897127": {
         "crustdata_company_id": 897127,
         "basic_info": {
@@ -30,6 +31,41 @@ COMPANIES = {
     },
 }
 
+ALL_DEMO_COMPANIES = {
+    **BENCHMARK_COMPANIES,
+    "6162764": {
+        "crustdata_company_id": 6162764,
+        "basic_info": {
+            "name": "Zomato",
+            "primary_domain": "zomato.com",
+            "employee_count": 3440,
+        },
+        "funding": {
+            "last_fundraise_date": "2021-07-23",
+            "total_funding_usd": "$2.1B (IPO)",
+            "last_fundraise_amount": "$1.3B",
+        },
+        "headcount": {"total_headcount": 3440, "headcount": 3440},
+    },
+    "5702": {
+        "crustdata_company_id": 5702,
+        "basic_info": {
+            "name": "Swiggy",
+            "primary_domain": "swiggy.com",
+            "employee_count": 6000,
+        },
+        "funding": {
+            "last_fundraise_date": "2022-01-24",
+            "total_funding_usd": "$3.6B",
+            "last_fundraise_amount": "$700M",
+        },
+        "headcount": {"total_headcount": 6000, "headcount": 6000},
+    },
+}
+
+# Preserve backwards compatibility for benchmark tests
+COMPANIES = BENCHMARK_COMPANIES
+
 
 def person(pid, name, title, headline, city, school, cid, vertical):
     return {
@@ -44,7 +80,7 @@ def person(pid, name, title, headline, city, school, cid, vertical):
             "employment_details": {
                 "current": [
                     {
-                        "crustdata_company_id": int(cid),
+                        "crustdata_company_id": int(cid) if str(cid).isdigit() else cid,
                         "title": title,
                         "start_date": "2018-01-01",
                     }
@@ -61,7 +97,7 @@ def person(pid, name, title, headline, city, school, cid, vertical):
     }
 
 
-PEOPLE = [
+BENCHMARK_PEOPLE = [
     person(
         "demo-a",
         "Asha Rao",
@@ -104,24 +140,83 @@ PEOPLE = [
     ),
 ]
 
+ALL_DEMO_PEOPLE = [
+    *BENCHMARK_PEOPLE,
+    person(
+        "zomato-eng",
+        "Abhishek Sagar",
+        "VP Engineering",
+        "VP Engineering at Zomato | Ex-Blinkit",
+        "Bengaluru",
+        "IIT Delhi",
+        "6162764",
+        "FoodTech & Quick Commerce",
+    ),
+    person(
+        "zomato-prod",
+        "Priya Sharma",
+        "VP Product",
+        "Ex-Zomato | Building hyper-local delivery",
+        "Bengaluru",
+        "IIT Delhi",
+        "6162764",
+        "FoodTech & Quick Commerce",
+    ),
+    person(
+        "swiggy-eng",
+        "Gursimran Singh",
+        "VP Engineering",
+        "VP Engineering at Swiggy | Ex-Myntra",
+        "Bengaluru",
+        "BITS Pilani",
+        "5702",
+        "FoodTech & Quick Commerce",
+    ),
+    person(
+        "swiggy-prod",
+        "Ananya Roy",
+        "Director of Product",
+        "Former Swiggy | Instamart scale operator",
+        "Bengaluru",
+        "BITS Pilani",
+        "5702",
+        "FoodTech & Quick Commerce",
+    ),
+    person(
+        "swiggy-exc",
+        "",
+        "Staff Logistics Architect",
+        "Staff Logistics Architect at Swiggy",
+        "Bengaluru",
+        "IIT Madras",
+        "5702",
+        "FoodTech & Quick Commerce",
+    ),
+]
+
+# Preserve backwards compatibility for benchmark tests
+PEOPLE = BENCHMARK_PEOPLE
+
 
 def response(endpoint, payload):
     if endpoint in ("/company/identify", "/company/search"):
         query_val = payload.get("query")
         if query_val:
-            val = query_val.lower()
+            val = query_val.lower().strip()
         else:
-            val = (payload.get("domains") or payload.get("names") or [""])[0].lower()
+            val = (payload.get("domains") or payload.get("names") or [""])[0].lower().strip()
         co = next(
             (
                 x
-                for x in COMPANIES.values()
+                for x in ALL_DEMO_COMPANIES.values()
                 if val
                 in (
                     x["basic_info"]["name"].lower(),
                     x["basic_info"]["primary_domain"],
                     str(x["crustdata_company_id"]),
                 )
+                or x["basic_info"]["name"].lower() in val
+                or val in x["basic_info"]["primary_domain"]
             ),
             None,
         )
@@ -131,7 +226,8 @@ def response(endpoint, payload):
             else fallback_response(endpoint, payload)
         )
     if endpoint == "/company/enrich":
-        co = COMPANIES.get(str(payload["crustdata_company_ids"][0]))
+        cid = str(payload["crustdata_company_ids"][0])
+        co = ALL_DEMO_COMPANIES.get(cid)
         return (
             [{"matches": [{"company_data": co}]}]
             if co
@@ -139,62 +235,86 @@ def response(endpoint, payload):
         )
     if endpoint == "/job/search":
         cid = str(payload.get("demo_company_id", "897127"))
-        if cid not in COMPANIES:
-            return {"job_listings": []}
-        title = (
-            "Lead Security Engineer"
-            if cid == "897127"
-            else "Staff Engineer - Machine Learning"
-        )
+        if cid == "897127":
+            jobs = [
+                {"title": "Lead Security Engineer", "url": "https://example.invalid/job/897127"},
+                {"title": "Staff Engineer - Payment Risk", "url": "https://example.invalid/job/risk"},
+            ]
+        elif cid == "6042422":
+            jobs = [
+                {"title": "Staff Engineer - Machine Learning", "url": "https://example.invalid/job/6042422"},
+                {"title": "Principal Architect - CRM Platform", "url": "https://example.invalid/job/crm"},
+            ]
+        elif cid == "6162764":
+            jobs = [
+                {"title": "Staff Logistics Optimization Engineer", "url": "https://example.invalid/job/zomato-dispatch"},
+                {"title": "Lead Real-time Dispatch Architect", "url": "https://example.invalid/job/zomato-routing"},
+            ]
+        elif cid == "5702":
+            jobs = [
+                {"title": "Staff Infrastructure Engineer - Instamart Fleet", "url": "https://example.invalid/job/swiggy-fleet"},
+                {"title": "Principal Architect - Delivery Routing", "url": "https://example.invalid/job/swiggy-routing"},
+            ]
+        else:
+            jobs = [
+                {"title": "Staff Backend Engineer", "url": "https://example.invalid/job/be"},
+                {"title": "Principal Platform Architect", "url": "https://example.invalid/job/plat"},
+            ]
+
+        co_info = ALL_DEMO_COMPANIES.get(cid, {}).get("basic_info", {"name": f"Company {cid}"})
         return {
             "job_listings": [
                 {
-                    "job_details": {
-                        "title": title,
-                        "url": "https://example.invalid/job/" + cid,
-                    },
-                    "company": {"basic_info": COMPANIES[cid]["basic_info"]},
+                    "job_details": {"title": j["title"], "url": j["url"]},
+                    "company": {"basic_info": co_info},
                     "location": {"raw": "Bengaluru"},
                 }
+                for j in jobs
             ]
-            + (
-                [
-                    {
-                        "job_details": {
-                            "title": "Staff Engineer - Payment Risk",
-                            "url": "https://example.invalid/job/risk",
-                        },
-                        "company": {"basic_info": COMPANIES[cid]["basic_info"]},
-                        "location": {"raw": "Bengaluru"},
-                    }
-                ]
-                if cid == "897127"
-                else []
-            )
         }
     if endpoint == "/person/search":
         cid = str(payload.get("demo_company_id", "897127"))
-        return {
-            "profiles": [
-                p
-                for p in PEOPLE
-                if str(
-                    p["experience"]["employment_details"]["current"][0][
-                        "crustdata_company_id"
-                    ]
-                )
-                == cid
+        profiles = [
+            p
+            for p in ALL_DEMO_PEOPLE
+            if str(
+                p["experience"]["employment_details"]["current"][0][
+                    "crustdata_company_id"
+                ]
+            )
+            == cid
+        ]
+        if not profiles:
+            profiles = [
+                person(
+                    f"synth-eng-{cid}",
+                    f"VP Engineering ({cid})",
+                    "VP Engineering",
+                    f"VP Engineering at Entity #{cid}",
+                    "Bengaluru",
+                    "IIT Delhi",
+                    cid,
+                    "Technology",
+                ),
+                person(
+                    f"synth-prod-{cid}",
+                    f"VP Product ({cid})",
+                    "VP Product",
+                    f"Ex-Founder | VP Product at Entity #{cid}",
+                    "Bengaluru",
+                    "IIT Delhi",
+                    cid,
+                    "Technology",
+                ),
             ]
-        }
+        return {"profiles": profiles}
     if endpoint == "/person/enrich":
         pid = payload.get("person_id")
-        return {"profiles": [p for p in PEOPLE if p["person_id"] == pid]}
+        return {"profiles": [p for p in ALL_DEMO_PEOPLE if p["person_id"] == pid]}
     return {}
 
 
 def fallback_response(endpoint, payload):
-    # Unseen entities are explicitly synthetic and carry no asserted employment,
-    # funding, or hiring facts. The standing demo bench supplies examples.
     if endpoint == "/company/identify":
         import hashlib
 
