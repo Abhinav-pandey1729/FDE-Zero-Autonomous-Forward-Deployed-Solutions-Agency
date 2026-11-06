@@ -27,9 +27,13 @@ class ClosingConnection(sqlite3.Connection):
 
 
 def connect():
-    c = sqlite3.connect(DB, timeout=30, factory=ClosingConnection)
+    c = sqlite3.connect(
+        DB, timeout=30.0, check_same_thread=False, factory=ClosingConnection
+    )
     c.row_factory = sqlite3.Row
     c.execute("PRAGMA foreign_keys=ON")
+    c.execute("PRAGMA journal_mode=WAL")
+    c.execute("PRAGMA busy_timeout=30000")
     return c
 
 

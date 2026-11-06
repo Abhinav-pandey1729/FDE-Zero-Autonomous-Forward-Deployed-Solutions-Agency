@@ -13,6 +13,33 @@ import db
 load_dotenv()
 
 
+from urllib.parse import urlparse
+
+
+def sanitize_domain(val):
+    """Normalize full URLs, protocol prefixes, paths, and query parameters to clean root domains."""
+    if not val or not isinstance(val, str):
+        return ""
+    val = val.strip()
+    if "://" in val or val.startswith("www."):
+        if not val.startswith(("http://", "https://")):
+            val = "https://" + val
+        parsed = urlparse(val)
+        host = parsed.netloc or parsed.path.split("/")[0]
+        if host.startswith("www."):
+            host = host[4:]
+        return host.split(":")[0].lower()
+    if "/" in val:
+        val = val.split("/")[0]
+    if "?" in val:
+        val = val.split("?")[0]
+    if "#" in val:
+        val = val.split("#")[0]
+    if val.startswith("www."):
+        val = val[4:]
+    return val.strip().lower()
+
+
 def api_token():
     """Prefer Streamlit Cloud secrets while supporting local environment files."""
     try:
@@ -76,6 +103,22 @@ class CrustdataClient:
         return fallback_response(endpoint, payload)
 
     def post(self, endpoint, payload):
+        if endpoint == "/company/identify" and isinstance(payload, dict):
+            payload = dict(payload)
+            if "domains" in payload:
+                payload["domains"] = [sanitize_domain(d) for d in payload["domains"] if sanitize_domain(d)]
+            if "names" in payload:
+                names = []
+                for n in payload["names"]:
+                    if isinstance(n, str) and ("://" in n or ("." in n and not n.endswith("."))):
+                        sd = sanitize_domain(n)
+                        payload.setdefault("domains", []).append(sd)
+                    else:
+                        names.append(n)
+                if names:
+                    payload["names"] = names
+                elif "domains" in payload:
+                    payload.pop("names", None)
         self.last_source = "demo" if self.mode == "demo" else "live"
         body = db.dump(payload)
         key = hashlib.sha256(body.encode()).hexdigest()

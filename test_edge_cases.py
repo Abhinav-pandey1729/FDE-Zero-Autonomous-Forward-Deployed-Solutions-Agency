@@ -158,3 +158,49 @@ class EdgeCases(unittest.TestCase):
         self.assertGreater(results["crash_resume_test"]["stages_reused_from_sqlite"], 0)
         self.assertEqual(results["crash_resume_test"]["credits_rebilled"], 0)
         self.assertEqual(results["crash_resume_test"]["duplicate_outbox_dispatches"], 0)
+    def test_url_sanitization_and_unresolvable_input_guard(self):
+        from service_engine import extract_entities_and_intents, pipeline
+        db.init_db()
+
+        # 1. Full URL normalization
+        messy_urls = ["https://www.razorpay.com/about?ref=123", "http://freshworks.com/"]
+        clean_domains = extract_entities_and_intents(messy_urls)
+        self.assertIn("razorpay.com", clean_domains)
+        self.assertIn("freshworks.com", clean_domains)
+
+        # 2. Unresolvable / gibberish query
+        gibberish = "zzzz_nonexistent_company_999"
+        run = pipeline([gibberish], mode="demo")
+        self.assertTrue(run)
+        
+        # Verify UNRESOLVABLE_INPUT_GUARD was logged to audit
+        guard_audit = db.query("SELECT * FROM audit WHERE run_id=? AND event='UNRESOLVABLE_INPUT_GUARD'", (run,))
+        self.assertTrue(guard_audit)
+        detail = json.loads(guard_audit[0]["detail"])
+        self.assertIn("[UNVERIFIED: Entity could not be resolved in Crustdata canonical graph — refusing to guess", detail["message"])
+
+        # 3. Ensure dual pathways still generated (never empty)
+        self.assertTrue(db.query("SELECT 1 FROM matches WHERE run_id=? AND pathway='ONE_ON_ONE'", (run,)))
+        self.assertTrue(db.query("SELECT 1 FROM matches WHERE run_id=? AND pathway='WORK_PARTY'", (run,)))
+
+    def test_rfc5545_ics_formatting(self):
+        from scheduler_service import ics, parse_time
+        from datetime import datetime, timezone, timedelta
+        
+        start = datetime(2030, 6, 1, 10, 0, tzinfo=timezone.utc)
+        end = start + timedelta(hours=1)
+        cal = ics("meet-123", "Test Founder Chemistry", start, end, 2, "Test Agenda")
+        
+        # Verify strict CRLF line endings
+        self.assertIn("\r\n", cal)
+        self.assertNotIn("\n\n", cal)
+        
+        lines = cal.split("\r\n")
+        self.assertEqual(lines[0], "BEGIN:VCALENDAR")
+        self.assertIn("VERSION:2.0", lines)
+        self.assertIn("UID:meet-123@foundry-zero.ai", lines)
+        self.assertIn("SEQUENCE:2", lines)
+        self.assertIn("STATUS:CONFIRMED", lines)
+        self.assertIn("DTSTART:20300601T100000Z", lines)
+        self.assertIn("DTEND:20300601T110000Z", lines)
+        self.assertIn("END:VCALENDAR", lines)
